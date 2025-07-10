@@ -8,7 +8,6 @@
 #     "numpy"
 # ]
 # ///
-#!/usr/bin/env -S uv run
 
 ## Retain this block for documentation purposes ##
 # Dev Process
