@@ -1,3 +1,4 @@
+#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -14,7 +15,14 @@
 # Open AI GPT-4 Turbo prompted to perform a task, responded with whisper code.
 # Open AI goaded into producing PEP 723 comment string
 # Claude Opus prompted with that output as well as feature requests:  rewrite this script. It needs to use a temporary file (preferably in RAM) and clean up the temporary file when it is done.
-# Claude Opus reprompted to add shabang but
+# Claude Opus reprompted to add shabang and reqiured info to top of file.
+# User researched and determined that shabang and PEP 723 use are mutually exclusive - so dropped the shabang.
+# Cursor prompted to "Check for ffmpeg in transcribe and cache the result for future calls.  If ffmpeg doesn't exist print an error message, raise an appropriate exception."
+# Cursor prompted to "Add instructions with the print for installing ffmpeg on ubuntu 24.04 to the print statement on line 43."
+# Cursor prompted to "Add instructions for mac and mac m1 also."
+# Cursor prompted to "avoid print statements for everything other than transcript output, when this function is called as a module, it should use an optionally provided logger, if no logger is provided, then use a locally defined logger configured to print to stdio"
+# User got in the middle and wrecked some shop to clean up handling for both command line and general use cases and cleaned up the specifics of how to launch and engage with the env in VSCode
+# /// end documentation purposes ///
 
 import sys
 import tempfile
@@ -24,11 +32,27 @@ from typing import Optional, Tuple
 from contextlib import contextmanager
 from io import BytesIO
 import warnings
+import shutil
 
 import whisper
 import numpy as np
 from pydub import AudioSegment
 from tqdm import tqdm
+
+
+def _check_ffmpeg_exists(logger=None):
+    """Check if ffmpeg is available in PATH. Cache the result for future calls. Use provided logger if available."""
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    if not hasattr(_check_ffmpeg_exists, "_cached_result"):
+        ffmpeg_path = shutil.which("ffmpeg")
+        _check_ffmpeg_exists._cached_result = ffmpeg_path is not None
+    if not _check_ffmpeg_exists._cached_result:
+        logger.error("ffmpeg is not installed or not found in PATH.")
+        logger.error("To install ffmpeg on Ubuntu 24.04, run: sudo apt update && sudo apt install ffmpeg")
+        logger.error("To install ffmpeg on Mac (Intel or Apple Silicon), run: brew install ffmpeg")
+        logger.error("If you do not have Homebrew, install it from https://brew.sh/")
+        raise RuntimeError("ffmpeg is required but was not found in PATH.")
 
 
 logging.basicConfig(
@@ -113,6 +137,7 @@ class AudioTranscriber:
         language: Optional[str] = None,
         initial_prompt: Optional[str] = None,
         verbose: bool = False,
+        logger=None,
     ) -> Tuple[str, dict]:
         """Transcribe audio file with optimized processing.
 
@@ -125,6 +150,9 @@ class AudioTranscriber:
         Returns:
             Tuple of (transcription_text, metadata_dict)
         """
+        if logger is None:
+            logger = logging.getLogger(__name__)
+        _check_ffmpeg_exists(logger=logger)
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
@@ -134,7 +162,7 @@ class AudioTranscriber:
         try:
             audio_segment = AudioSegment.from_file(audio_path)
         except Exception as e:
-            raise RuntimeError(f"Failed to load audio file: {e}")
+            raise RuntimeError(f"Failed to load audio file {audio_path}, AudioSegment.from_file said: {type(e).__name__}: {e}")
 
         # Preprocess for optimal transcription
         audio_segment = self._preprocess_audio(audio_segment)
@@ -200,9 +228,9 @@ def main() -> int:
         "--show-metadata", action="store_true", help="Display transcription metadata"
     )
 
-    args = parser.parse_args()
-
     try:
+        args = parser.parse_args()
+
         # Initialize transcriber
         transcriber = AudioTranscriber(model_name=args.model)
 
@@ -222,13 +250,11 @@ def main() -> int:
             print(f"Language: {metadata['language']}", file=sys.stderr)
             print(f"Duration: {metadata['duration']:.1f} seconds", file=sys.stderr)
             print(f"Model: {metadata['model']}", file=sys.stderr)
-
         return 0
-
     except Exception as e:
-        logger.error(f"Transcription failed: {e}")
+        logger.exception(e)
         return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
