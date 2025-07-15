@@ -10,6 +10,12 @@
 # ]
 # ///
 
+## Notes
+# openai-whisper has its own command line 
+#   see https://github.com/openai/whisper/tree/main?tab=readme-ov-file#available-models-and-languages
+
+
+
 ## Retain this block for documentation purposes ##
 # Dev Process
 # Open AI GPT-4 Turbo prompted to perform a task, responded with whisper code.
@@ -64,7 +70,8 @@ logger = logging.getLogger(__name__)
 class AudioTranscriber:
     """High-performance audio transcription using Whisper with in-memory processing."""
 
-    SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large"]
+    # See: https://github.com/openai/whisper#available-models or https://huggingface.co/models?search=openai/whisper
+    SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"]
     OPTIMAL_SAMPLE_RATE = 16000  # Whisper's preferred sample rate
 
     def __init__(self, model_name: str = "base", device: Optional[str] = None):
