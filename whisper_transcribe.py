@@ -180,22 +180,32 @@ class AudioTranscriber:
 
             # Transcribe with progress indication
             logger.info("Starting transcription")
+            
+            # Prepare transcription options
+            transcribe_options = {
+                'audio': audio_array,
+                'language': language,
+                'initial_prompt': initial_prompt,
+                'fp16': False,
+            }
+
+            # Use tqdm with SSH-friendly settings
             if verbose:
-                with tqdm(total=1, desc="Transcribing", unit="file") as pbar:
-                    result = self.model.transcribe(
-                        audio_array,
-                        language=language,
-                        initial_prompt=initial_prompt,
-                        fp16=False,  # More stable on diverse hardware
-                    )
-                    pbar.update(1)
+                # Show progress based on audio duration for better granularity
+                duration_seconds = int(len(audio_segment) / 1000.0)
+                with tqdm(
+                    total=duration_seconds,
+                    desc="Transcribing",
+                    unit="sec",
+                    ncols=80,  # Fixed width for SSH
+                    ascii=True,  # ASCII chars work better over SSH
+                    disable=False,
+                    file=sys.stderr  # Ensure progress goes to stderr, not stdout
+                ) as pbar:
+                    result = self.model.transcribe(**transcribe_options)
+                    pbar.update(duration_seconds)  # Complete the bar
             else:
-                result = self.model.transcribe(
-                    audio_array,
-                    language=language,
-                    initial_prompt=initial_prompt,
-                    fp16=False,
-                )
+                result = self.model.transcribe(**transcribe_options)
 
         # Extract useful metadata
         metadata = {
@@ -205,6 +215,33 @@ class AudioTranscriber:
         }
 
         return result["text"].strip(), metadata
+
+
+def format_sentences(text: str) -> str:
+    """Format text with each sentence on a new line.
+
+    Args:
+        text: Input text to format
+
+    Returns:
+        Formatted text with sentences on separate lines
+    """
+    import re
+
+    # Split on sentence endings, preserving the punctuation
+    sentences = re.split(r'([.!?]+)', text)
+
+    # Reconstruct sentences with their punctuation
+    formatted_sentences = []
+    for i in range(0, len(sentences) - 1, 2):
+        sentence = sentences[i].strip()
+        punctuation = sentences[i + 1] if i + 1 < len(sentences) else ""
+
+        if sentence:  # Only add non-empty sentences
+            formatted_sentences.append(sentence + punctuation)
+
+    # Join with newlines and clean up extra whitespace
+    return '\n'.join(formatted_sentences).strip()
 
 
 def main() -> int:
@@ -249,8 +286,11 @@ def main() -> int:
             verbose=args.verbose,
         )
 
+        # Format text with sentences on separate lines
+        formatted_text = format_sentences(text)
+
         # Output results
-        print(text)
+        print(formatted_text)
 
         if args.show_metadata:
             print("\n--- Metadata ---", file=sys.stderr)

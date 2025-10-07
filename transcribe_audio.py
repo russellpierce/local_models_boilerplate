@@ -5,6 +5,7 @@
 #     "click>=8.0.0",
 #     "inquirer>=3.0.0",
 #     "anthropic>=0.40.0",
+#     "platformdirs>=3.0.0",
 # ]
 # ///
 
@@ -14,12 +15,67 @@ import sys
 from pathlib import Path
 import shlex
 import time
+import json
 import click
 import inquirer
 import anthropic
+from platformdirs import user_cache_dir
 
 # Configuration
 ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
+PROMPTS_CACHE_FILE = Path(user_cache_dir("transcribe_audio")) / "prompts.json"
+
+
+# ============================================================================
+# Prompt Cache Management
+# ============================================================================
+
+def load_cached_prompts():
+    """Load cached prompts from JSON file
+
+    Returns:
+        dict: Dictionary with 'initial_prompt' and 'summary_prompt' keys (values may be None)
+    """
+    if not PROMPTS_CACHE_FILE.exists():
+        return {'initial_prompt': None, 'summary_prompt': None}
+
+    try:
+        with open(PROMPTS_CACHE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return {
+                'initial_prompt': data.get('initial_prompt'),
+                'summary_prompt': data.get('summary_prompt')
+            }
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Warning: Failed to load cached prompts: {e}")
+        return {'initial_prompt': None, 'summary_prompt': None}
+
+
+def save_cached_prompts(initial_prompt=None, summary_prompt=None):
+    """Save prompts to cache file, merging with existing values
+
+    Args:
+        initial_prompt: Initial transcription prompt (None to keep existing)
+        summary_prompt: Summary system prompt (None to keep existing)
+    """
+    # Load existing cache
+    existing = load_cached_prompts()
+
+    # Update only provided values
+    if initial_prompt is not None:
+        existing['initial_prompt'] = initial_prompt
+    if summary_prompt is not None:
+        existing['summary_prompt'] = summary_prompt
+
+    # Ensure directory exists
+    PROMPTS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    # Save to file
+    try:
+        with open(PROMPTS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(existing, f, indent=2)
+    except IOError as e:
+        print(f"Warning: Failed to save cached prompts: {e}")
 
 
 # ============================================================================
@@ -34,6 +90,7 @@ def fetch_audio_files():
         Path("/mnt/c/Users").glob("*/Documents"),
         Path("/mnt/c/Users").glob("*/Music"),
         Path("/mnt/c/Users").glob("*/Desktop"),
+        Path("/mnt/c/Users").glob("*/Videos"),
         Path("/mnt/c/Users").glob("*/Documents/Sound Recordings"),
         [Path.home() / "Downloads"],
         [Path.home() / "Documents"],
@@ -41,7 +98,7 @@ def fetch_audio_files():
         [Path.cwd()],
     ]
 
-    audio_extensions = {'.m4a', '.mp3', '.wav', '.mp4', '.avi', '.mov', '.flac', '.ogg'}
+    audio_extensions = {'.m4a', '.mp3', '.wav', '.mp4', '.avi', '.mov', '.mkv', '.flac', '.ogg'}
     audio_files = []
 
     # Flatten and search all paths
@@ -132,46 +189,85 @@ def select_model():
 
 def collect_prompt_interactively():
     """Collect prompt interactively from user"""
+    # Load cached prompts
+    cached = load_cached_prompts()
+    cached_initial = cached.get('initial_prompt')
+
     print("\nWould you like to provide an initial prompt to guide the transcription?")
+
+    # Build choices dynamically
+    choices = [
+        "📝 Enter a custom prompt",
+        "⏭️ Skip (no prompt)",
+    ]
+
+    if cached_initial:
+        choices.insert(1, "🔄 Use last prompt")
+
     questions = [
         inquirer.List('provide_prompt',
                      message="Initial prompt",
-                     choices=[
-                         "📝 Enter a custom prompt",
-                         "⏭️ Skip (no prompt)",
-                     ],
+                     choices=choices,
                      ),
     ]
 
     answers = inquirer.prompt(questions)
-    if answers and answers['provide_prompt'].startswith("📝"):
-        prompt = click.prompt("Enter your initial prompt for transcription", type=str)
-        return prompt.strip()
+    if answers:
+        selection = answers['provide_prompt']
+
+        if selection.startswith("📝"):
+            prompt = click.prompt("Enter your initial prompt for transcription", type=str)
+            prompt = prompt.strip()
+            save_cached_prompts(initial_prompt=prompt)
+            return prompt
+        elif selection.startswith("🔄"):
+            return cached_initial
+        else:  # Skip
+            return None
     else:
         return None
 
 
 def collect_summary_prompt_interactively():
     """Collect summary system prompt interactively from user"""
+    # Load cached prompts
+    cached = load_cached_prompts()
+    cached_summary = cached.get('summary_prompt')
+
     default_prompt = "Process the following transcript and attempt to provide the full content, but in format that logically flows and has structure and headings."
 
     print(f"\nDefault summary prompt: \"{default_prompt}\"")
     print("\nWould you like to customize the summary prompt?")
 
+    # Build choices dynamically
+    choices = [
+        "✓ Use default prompt",
+        "✏️ Customize the summary prompt",
+    ]
+
+    if cached_summary:
+        choices.insert(1, "🔄 Use last prompt")
+
     questions = [
         inquirer.List('customize_prompt',
                      message="Summary prompt",
-                     choices=[
-                         "✓ Use default prompt",
-                         "✏️ Customize the summary prompt",
-                     ],
+                     choices=choices,
                      ),
     ]
 
     answers = inquirer.prompt(questions)
-    if answers and answers['customize_prompt'].startswith("✏️"):
-        custom_prompt = click.prompt("Enter your custom summary prompt", type=str)
-        return custom_prompt.strip()
+    if answers:
+        selection = answers['customize_prompt']
+
+        if selection.startswith("✏️"):
+            custom_prompt = click.prompt("Enter your custom summary prompt", type=str)
+            custom_prompt = custom_prompt.strip()
+            save_cached_prompts(summary_prompt=custom_prompt)
+            return custom_prompt
+        elif selection.startswith("🔄"):
+            return cached_summary
+        else:  # Use default
+            return None
     else:
         return None
 
@@ -264,6 +360,82 @@ def clean_transcript(transcript_text, api_key, mode="clean", format_slack=False,
 
 
 # ============================================================================
+# Video Processing Functions
+# ============================================================================
+
+def check_ffmpeg_installed():
+    """Check if ffmpeg is installed on the local system"""
+    try:
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def extract_audio_from_mkv(mkv_file_path):
+    """Extract audio from MKV file using ffmpeg
+
+    Args:
+        mkv_file_path: Path to the MKV file
+
+    Returns:
+        Path to extracted audio file, or None if extraction fails
+    """
+    if not check_ffmpeg_installed():
+        print("Error: ffmpeg is not installed. Please install ffmpeg to process MKV files.")
+        print("On Ubuntu/Debian: sudo apt install ffmpeg")
+        print("On macOS: brew install ffmpeg")
+        return None
+
+    mkv_path = Path(mkv_file_path)
+    if not mkv_path.exists():
+        print(f"Error: MKV file not found: {mkv_file_path}")
+        return None
+
+    # Create output path for extracted audio (use m4a format for compatibility)
+    output_path = mkv_path.parent / f"{mkv_path.stem}_extracted.m4a"
+
+    print(f"\nExtracting audio from MKV file...")
+    print(f"  Input:  {mkv_path}")
+    print(f"  Output: {output_path}")
+
+    # Use ffmpeg to extract audio
+    # -i: input file
+    # -vn: disable video
+    # -acodec aac: encode audio as AAC
+    # -b:a 192k: audio bitrate
+    # -y: overwrite output file if it exists
+    cmd = [
+        'ffmpeg',
+        '-i', str(mkv_path),
+        '-vn',
+        '-acodec', 'aac',
+        '-b:a', '192k',
+        '-y',
+        str(output_path)
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            print(f"Error: ffmpeg failed to extract audio")
+            print(f"stderr: {result.stderr}")
+            return None
+
+        if output_path.exists():
+            print(f"✓ Audio extracted successfully")
+            return str(output_path)
+        else:
+            print(f"Error: Output file was not created")
+            return None
+
+    except Exception as e:
+        print(f"Error during audio extraction: {e}")
+        return None
+
+
+# ============================================================================
 # SSH Command Execution
 # ============================================================================
 
@@ -320,8 +492,27 @@ def transcribe_audio(transcript_host, audio_file_path, model, clean_transcript_f
         print(f"Audio file not found: {audio_file_path}")
         return False
 
+    # Check if file is MKV and extract audio if needed
+    extracted_audio_path = None
+    original_audio_file_path = audio_file_path
+
+    if audio_file.suffix.lower() == '.mkv':
+        print(f"\n{'='*70}")
+        print(f"MKV file detected - extracting audio...")
+        print(f"{'='*70}\n")
+
+        extracted_audio_path = extract_audio_from_mkv(audio_file_path)
+
+        if not extracted_audio_path:
+            print("Failed to extract audio from MKV file. Exiting.")
+            return False
+
+        # Use extracted audio file for transcription
+        audio_file_path = extracted_audio_path
+        audio_file = Path(audio_file_path)
+
     audio_filename = audio_file.name
-    text_filename = audio_file.stem + ".txt"
+    text_filename = Path(original_audio_file_path).stem + ".txt"
 
     if output_dir is None:
         output_dir = audio_file.parent
@@ -339,6 +530,7 @@ def transcribe_audio(transcript_host, audio_file_path, model, clean_transcript_f
     print(f"  Summary:        {summary_mode}")
     print(f"  Slack format:   {format_slack}")
     print(f"  Initial prompt: {initial_prompt if initial_prompt else 'None'}")
+    print(f"  Summary prompt: {summary_system_prompt if summary_system_prompt else 'Default'}")
     print(f"{'='*70}\n")
 
     try:
@@ -448,6 +640,14 @@ def transcribe_audio(transcript_host, audio_file_path, model, clean_transcript_f
         if not run_command(cleanup_cmd, "Clean up remote files"):
             print("Warning: Failed to clean up remote files")
 
+        # Clean up local extracted audio file if it was created from MKV
+        if extracted_audio_path:
+            try:
+                Path(extracted_audio_path).unlink()
+                print(f"✓ Cleaned up extracted audio file: {extracted_audio_path}")
+            except Exception as e:
+                print(f"Warning: Failed to clean up extracted audio file: {e}")
+
         print(f"\n✅ Transcription completed successfully!")
         print(f"\nOutput files created:")
         print(f"  • Raw transcript: {output_path}")
@@ -469,6 +669,13 @@ def transcribe_audio(transcript_host, audio_file_path, model, clean_transcript_f
 
     except Exception as e:
         print(f"Error during transcription: {e}")
+        # Clean up local extracted audio file if it was created from MKV and an error occurred
+        if extracted_audio_path and Path(extracted_audio_path).exists():
+            try:
+                Path(extracted_audio_path).unlink()
+                print(f"✓ Cleaned up extracted audio file: {extracted_audio_path}")
+            except Exception as cleanup_error:
+                print(f"Warning: Failed to clean up extracted audio file: {cleanup_error}")
         return False
 
 
