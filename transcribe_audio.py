@@ -202,7 +202,7 @@ def collect_prompt_interactively():
     ]
 
     if cached_initial:
-        choices.insert(1, "🔄 Use last prompt")
+        choices.insert(1, f"🔄 Use last prompt: \"{cached_initial}\"")
 
     questions = [
         inquirer.List('provide_prompt',
@@ -246,7 +246,7 @@ def collect_summary_prompt_interactively():
     ]
 
     if cached_summary:
-        choices.insert(1, "🔄 Use last prompt")
+        choices.insert(1, f"🔄 Use last prompt: \"{cached_summary}\"")
 
     questions = [
         inquirer.List('customize_prompt',
@@ -706,72 +706,77 @@ def main(transcript_host, audio_file_path, output_dir, clean, summary, slack, pr
         summary_prompt: Custom system prompt for summary generation
     """
 
-    # --summary implies --clean
-    if summary:
-        clean = True
+    try:
+        # --summary implies --clean
+        if summary:
+            clean = True
 
-    # Fetch audio file list first (if not provided via CLI)
-    audio_files = None
-    if not audio_file_path:
-        print("\nLooking for recent audio files...")
-        audio_files = fetch_audio_files()
+        # Fetch audio file list first (if not provided via CLI)
+        audio_files = None
+        if not audio_file_path:
+            print("\nLooking for recent audio files...")
+            audio_files = fetch_audio_files()
 
-    # Get transcript host if not provided, and test SSH connection
-    if not transcript_host:
-        while True:
-            transcript_host = click.prompt("Enter transcript host IP or hostname", type=str).strip()
-            if test_ssh_connection(transcript_host):
-                break
-            print("\nPlease enter a valid transcript host.\n")
-    else:
-        # Test provided host
-        if not test_ssh_connection(transcript_host):
-            print(f"\nSSH connection failed to provided host: {transcript_host}")
+        # Get transcript host if not provided, and test SSH connection
+        if not transcript_host:
             while True:
                 transcript_host = click.prompt("Enter transcript host IP or hostname", type=str).strip()
                 if test_ssh_connection(transcript_host):
                     break
                 print("\nPlease enter a valid transcript host.\n")
+        else:
+            # Test provided host
+            if not test_ssh_connection(transcript_host):
+                print(f"\nSSH connection failed to provided host: {transcript_host}")
+                while True:
+                    transcript_host = click.prompt("Enter transcript host IP or hostname", type=str).strip()
+                    if test_ssh_connection(transcript_host):
+                        break
+                    print("\nPlease enter a valid transcript host.\n")
 
-    # Get audio file if not provided
-    if not audio_file_path:
-        print("\nPlease select an audio file...")
-        audio_file_path = select_audio_file(audio_files)
+        # Get audio file if not provided
+        if not audio_file_path:
+            print("\nPlease select an audio file...")
+            audio_file_path = select_audio_file(audio_files)
 
-    if not audio_file_path:
-        print("No audio file selected. Exiting.")
-        sys.exit(1)
+        if not audio_file_path:
+            print("No audio file selected. Exiting.")
+            sys.exit(1)
 
-    # Collect prompt interactively if not provided via CLI
-    if prompt is None:
-        prompt = collect_prompt_interactively()
+        # Collect prompt interactively if not provided via CLI
+        if prompt is None:
+            prompt = collect_prompt_interactively()
 
-    # Select optional parameters interactively if not provided via CLI
-    ctx = click.get_current_context()
-    clean_explicit = ctx.get_parameter_source('clean') == click.core.ParameterSource.COMMANDLINE
-    summary_explicit = ctx.get_parameter_source('summary') == click.core.ParameterSource.COMMANDLINE
-    slack_explicit = ctx.get_parameter_source('slack') == click.core.ParameterSource.COMMANDLINE
+        # Select optional parameters interactively if not provided via CLI
+        ctx = click.get_current_context()
+        clean_explicit = ctx.get_parameter_source('clean') == click.core.ParameterSource.COMMANDLINE
+        summary_explicit = ctx.get_parameter_source('summary') == click.core.ParameterSource.COMMANDLINE
+        slack_explicit = ctx.get_parameter_source('slack') == click.core.ParameterSource.COMMANDLINE
 
-    # Only ask for interactive selection if no flags were explicitly set
-    if not (clean_explicit or summary_explicit or slack_explicit):
-        options = select_optional_parameters(clean, summary, slack)
-        clean = options['clean']
-        summary = options['summary']
-        slack = options['slack']
-    elif summary:  # summary implies clean
-        clean = True
+        # Only ask for interactive selection if no flags were explicitly set
+        if not (clean_explicit or summary_explicit or slack_explicit):
+            options = select_optional_parameters(clean, summary, slack)
+            clean = options['clean']
+            summary = options['summary']
+            slack = options['slack']
+        elif summary:  # summary implies clean
+            clean = True
 
-    # Collect summary prompt interactively if summary mode is selected and no CLI prompt provided
-    if summary and summary_prompt is None:
-        summary_prompt = collect_summary_prompt_interactively()
+        # Collect summary prompt interactively if summary mode is selected and no CLI prompt provided
+        if summary and summary_prompt is None:
+            summary_prompt = collect_summary_prompt_interactively()
 
-    # Select transcription model
-    model = select_model()
+        # Select transcription model
+        model = select_model()
 
-    success = transcribe_audio(transcript_host, audio_file_path, model, clean, summary, slack, output_dir, prompt, summary_prompt)
+        success = transcribe_audio(transcript_host, audio_file_path, model, clean, summary, slack, output_dir, prompt, summary_prompt)
 
-    if not success:
-        sys.exit(1)
+        if not success:
+            sys.exit(1)
+
+    except KeyboardInterrupt:
+        print("\n\nOperation cancelled by user.")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
