@@ -71,7 +71,7 @@ class AudioTranscriber:
     """High-performance audio transcription using Whisper with in-memory processing."""
 
     # See: https://github.com/openai/whisper#available-models or https://huggingface.co/models?search=openai/whisper
-    SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"]
+    SUPPORTED_MODELS = ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3", "medium.en"]
     OPTIMAL_SAMPLE_RATE = 16000  # Whisper's preferred sample rate
 
     def __init__(self, model_name: str = "base", device: Optional[str] = None):
@@ -144,6 +144,7 @@ class AudioTranscriber:
         language: Optional[str] = None,
         initial_prompt: Optional[str] = None,
         verbose: bool = False,
+        add_sentence_newlines: bool = True,
         logger=None,
     ) -> Tuple[str, dict]:
         """Transcribe audio file with optimized processing.
@@ -153,6 +154,7 @@ class AudioTranscriber:
             language: Force specific language (e.g., 'en', 'es')
             initial_prompt: Optional context to guide transcription
             verbose: Show progress bar during transcription
+            add_sentence_newlines: Whether to add newlines after sentence-ending punctuation
 
         Returns:
             Tuple of (transcription_text, metadata_dict)
@@ -214,7 +216,15 @@ class AudioTranscriber:
             "model": self.model_name,
         }
 
-        return result["text"].strip(), metadata
+        # Process text for sentence newlines if requested
+        transcribed_text = result["text"].strip()
+        if add_sentence_newlines:
+            import re
+            # Add newlines after sentence-ending punctuation (., !, ?)
+            # but not after abbreviations or decimal numbers
+            transcribed_text = re.sub(r'([.!?])\s+([A-Z])', r'\1\n\2', transcribed_text)
+
+        return transcribed_text, metadata
 
 
 def format_sentences(text: str) -> str:
@@ -271,6 +281,9 @@ def main() -> int:
     parser.add_argument(
         "--show-metadata", action="store_true", help="Display transcription metadata"
     )
+    parser.add_argument(
+        "--no-sentence-newlines", action="store_true", help="Disable adding newlines after sentences (default: enabled)"
+    )
 
     try:
         args = parser.parse_args()
@@ -284,6 +297,7 @@ def main() -> int:
             language=args.language,
             initial_prompt=args.prompt,
             verbose=args.verbose,
+            add_sentence_newlines=not args.no_sentence_newlines,
         )
 
         # Format text with sentences on separate lines
