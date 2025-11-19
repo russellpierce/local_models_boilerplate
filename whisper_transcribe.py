@@ -196,8 +196,8 @@ class AudioTranscriber:
                 'logprob_threshold': -1.0,  # Default, detects uncertain transcriptions
                 'no_speech_threshold': 0.6,  # Default, detects silence/noise
                 # Improve accuracy with larger beam search
-                'beam_size': 5,  # Default, increase to 10 for higher quality at cost of speed
-                'best_of': 5,  # Default, number of candidates when sampling
+                'beam_size': 10,  # Increased for higher quality at cost of speed
+                'best_of': 2,  # Number of candidates when sampling
                 # Temperature for sampling (0 = greedy, higher = more random)
                 'temperature': 0.0,  # Greedy decoding for most consistent results
             }
