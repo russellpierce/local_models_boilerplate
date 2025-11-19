@@ -110,20 +110,20 @@ def fetch_audio_files():
             all_paths.extend(path_group)
 
     for search_path in all_paths:
-        if search_path.exists() and search_path.is_dir():
+        for attempt in range(2):
             try:
+                if not (search_path.exists() and search_path.is_dir()):
+                    break
+
                 for file in search_path.iterdir():
                     if file.is_file() and file.suffix.lower() in audio_extensions:
                         audio_files.append(file)
+                break  # Success, exit retry loop
+
             except PermissionError:
-                # Retry once after 1 second
-                time.sleep(1)
-                try:
-                    for file in search_path.iterdir():
-                        if file.is_file() and file.suffix.lower() in audio_extensions:
-                            audio_files.append(file)
-                except PermissionError:
-                    continue
+                if attempt == 0:
+                    time.sleep(1)
+                # On final attempt, silently skip this path
 
     if audio_files:
         # Sort by modification time (newest first), limit to 15 most recent
