@@ -189,6 +189,17 @@ class AudioTranscriber:
                 'language': language,
                 'initial_prompt': initial_prompt,
                 'fp16': False,
+                # Prevent repetition artifacts by disabling context conditioning
+                'condition_on_previous_text': False,
+                # Quality control thresholds to detect and handle poor transcriptions
+                'compression_ratio_threshold': 2.4,  # Default, detects repetitive text
+                'logprob_threshold': -1.0,  # Default, detects uncertain transcriptions
+                'no_speech_threshold': 0.6,  # Default, detects silence/noise
+                # Improve accuracy with larger beam search
+                'beam_size': 10,  # Increased for higher quality at cost of speed
+                'best_of': 2,  # Number of candidates when sampling
+                # Temperature for sampling (0 = greedy, higher = more random)
+                'temperature': 0.0,  # Greedy decoding for most consistent results
             }
 
             # Use tqdm with SSH-friendly settings

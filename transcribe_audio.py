@@ -402,21 +402,34 @@ def extract_audio_from_mkv(mkv_file_path):
     # Use ffmpeg to extract audio
     # -i: input file
     # -vn: disable video
-    # -acodec aac: encode audio as AAC
-    # -b:a 192k: audio bitrate
+    # -acodec copy: copy audio stream without re-encoding (preserves quality)
     # -y: overwrite output file if it exists
+    # Note: Using 'copy' avoids lossy re-encoding which can introduce artifacts
     cmd = [
         'ffmpeg',
         '-i', str(mkv_path),
         '-vn',
-        '-acodec', 'aac',
-        '-b:a', '192k',
+        '-acodec', 'copy',
         '-y',
         str(output_path)
     ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
+
+        # If copy failed (incompatible codec), fall back to re-encoding
+        if result.returncode != 0 and 'does not support codec' in result.stderr.lower():
+            print(f"⚠ Stream copy failed (incompatible codec), re-encoding to AAC...")
+            cmd = [
+                'ffmpeg',
+                '-i', str(mkv_path),
+                '-vn',
+                '-acodec', 'aac',
+                '-b:a', '256k',  # Higher bitrate to minimize quality loss
+                '-y',
+                str(output_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
             print(f"Error: ffmpeg failed to extract audio")
